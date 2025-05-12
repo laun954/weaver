@@ -185,7 +185,7 @@ public class Weaver {
     public static void main(String[] args) {
         GameConfig config = new GameConfig();
 
-        // ✅ 在这里配置标志
+
         config.showError = true;
         config.showPath = true;
         config.randomWords = false;
@@ -239,4 +239,22 @@ public class Weaver {
         }
         return diff == 1;
     }
+}
+
+abstract class WeaverGameTemplate {
+    public final void playGame() {
+        init();
+        while (!isWin()) {
+            String input = getInput();
+            processInput(input);
+            showFeedback();
+        }
+        showWin();
+    }
+    protected abstract void init();
+    protected abstract String getInput();
+    protected abstract void processInput(String input);
+    protected abstract void showFeedback();
+    protected abstract boolean isWin();
+    protected abstract void showWin();
 }
