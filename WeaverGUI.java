@@ -7,7 +7,52 @@ import java.io.IOException;
 import java.util.*;
 import java.util.List;
 
-// Model
+// 控制标志类
+class WeaverSettings {
+    public static boolean showError = true;
+    public static boolean showPath = false;
+    public static boolean randomWords = false;
+}
+
+interface LetterStatusStrategy {
+    List<WeaverModel.LetterStatus> calculateStatus(String guess, String target);
+}
+
+class DefaultLetterStatusStrategy implements LetterStatusStrategy {
+    @Override
+    public List<WeaverModel.LetterStatus> calculateStatus(String guess, String target) {
+        List<WeaverModel.LetterStatus> statusList = new ArrayList<>();
+        for (int i = 0; i < guess.length(); i++) {
+            char c = guess.charAt(i);
+            if (target.charAt(i) == c) {
+                statusList.add(WeaverModel.LetterStatus.CORRECT);
+            } else if (target.indexOf(c) != -1) {
+                statusList.add(WeaverModel.LetterStatus.PRESENT);
+            } else {
+                statusList.add(WeaverModel.LetterStatus.ABSENT);
+            }
+        }
+        return statusList;
+    }
+}
+
+interface WeaverModelFactory {
+    WeaverModel createModel(Set<String> wordSet);
+}
+
+class RandomWeaverModelFactory implements WeaverModelFactory {
+    public WeaverModel createModel(Set<String> wordSet) {
+        String[] wordsArray = wordSet.toArray(new String[0]);
+        Random rand = new Random();
+        String newStart = wordsArray[rand.nextInt(wordsArray.length)];
+        String newTarget;
+        do {
+            newTarget = wordsArray[rand.nextInt(wordsArray.length)];
+        } while (newStart.equals(newTarget));
+        return new WeaverModel(newStart, newTarget, wordSet, new DefaultLetterStatusStrategy());
+    }
+}
+
 class WeaverModel {
     public enum LetterStatus { CORRECT, PRESENT, ABSENT }
 
@@ -18,12 +63,14 @@ class WeaverModel {
     private Set<String> wordSet;
     private Set<Character> usedLetters = new HashSet<>();
     private List<LetterStatus> lastGuessStatus;
+    private LetterStatusStrategy statusStrategy;
 
-    public WeaverModel(String start, String target, Set<String> words) {
+    public WeaverModel(String start, String target, Set<String> words, LetterStatusStrategy strategy) {
         this.startWord = start.toUpperCase();
         this.targetWord = target.toUpperCase();
         this.currentWord = this.startWord;
         this.wordSet = words;
+        this.statusStrategy = strategy;
     }
 
     public boolean tryWord(String word) {
@@ -38,18 +85,7 @@ class WeaverModel {
     }
 
     private void calculateLetterStatus(String word) {
-        lastGuessStatus = new ArrayList<>();
-        String upperWord = word.toUpperCase();
-        for (int i = 0; i < upperWord.length(); i++) {
-            char c = upperWord.charAt(i);
-            if (targetWord.charAt(i) == c) {
-                lastGuessStatus.add(LetterStatus.CORRECT);
-            } else if (targetWord.indexOf(c) != -1) {
-                lastGuessStatus.add(LetterStatus.PRESENT);
-            } else {
-                lastGuessStatus.add(LetterStatus.ABSENT);
-            }
-        }
+        lastGuessStatus = statusStrategy.calculateStatus(word.toUpperCase(), targetWord);
     }
 
     private void updateUsedLetters(String word) {
@@ -83,7 +119,31 @@ class WeaverModel {
         return diff == 1;
     }
 
-    // Getters
+    public List<String> findAnyPath(String start, String target) {
+        Queue<List<String>> queue = new LinkedList<>();
+        Set<String> visited = new HashSet<>();
+        queue.offer(Arrays.asList(start));
+        visited.add(start);
+
+        while (!queue.isEmpty()) {
+            List<String> path = queue.poll();
+            String last = path.get(path.size() - 1);
+            if (last.equals(target)) return path;
+
+            for (String word : wordSet) {
+                if (!visited.contains(word) && isOneLetterDifference(last, word)) {
+                    List<String> newPath = new ArrayList<>(path);
+                    newPath.add(word);
+                    queue.offer(newPath);
+                    visited.add(word);
+                }
+            }
+        }
+        return null;
+    }
+
+
+    public String getStartWord() { return startWord; }
     public String getCurrentWord() { return currentWord; }
     public String getTargetWord() { return targetWord; }
     public int getSteps() { return steps; }
@@ -92,7 +152,6 @@ class WeaverModel {
     public Set<String> getWordSet() { return wordSet; }
 }
 
-// View
 class WeaverView {
     private JFrame frame;
     private JPanel gameGridPanel;
@@ -103,11 +162,13 @@ class WeaverView {
     private JLabel statusLabel;
     public JLabel inputDisplayLabel;
     public WeaverModel model;
-
-    private JLabel startWordLabel;
-    private JLabel targetWordLabel;
-    // 回退按钮
     private JButton backspaceButton;
+    private JLabel wordPairLabel;
+    public JCheckBox showErrorCheckbox;
+    public JCheckBox showPathCheckbox;
+    public JCheckBox randomWordsCheckbox;
+    private JPanel focusPanel;
+
 
     public WeaverView() {
         initializeUI();
@@ -117,8 +178,7 @@ class WeaverView {
         frame = new JFrame("Weaver Game");
         frame.setLayout(new BorderLayout(10, 10));
 
-        // 状态
-        JPanel topPanel = new JPanel(new GridLayout(2, 1));
+        JPanel topPanel = new JPanel(new GridLayout(3, 1));
         statusLabel = new JLabel("开始游戏!", SwingConstants.CENTER);
         inputDisplayLabel = new JLabel("", SwingConstants.CENTER);
         inputDisplayLabel.setFont(new Font("Arial", Font.BOLD, 20));
@@ -126,20 +186,14 @@ class WeaverView {
         topPanel.add(inputDisplayLabel);
         frame.add(topPanel, BorderLayout.NORTH);
 
-
-        // 格子
         gameGridPanel = new JPanel(new GridLayout(0, 1, 5, 5));
-        gameGridPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         JScrollPane scrollPane = new JScrollPane(gameGridPanel);
         frame.add(scrollPane, BorderLayout.CENTER);
 
-        // 键盘
-        keyboardPanel = new JPanel(new GridLayout(3, 9, 5, 5));
         initializeKeyboard();
         frame.add(keyboardPanel, BorderLayout.SOUTH);
 
-        // 控制面板
-        JPanel controlPanel = new JPanel(new GridLayout(2, 1, 5, 5));
+        JPanel controlPanel = new JPanel(new GridLayout(2, 1));
         resetButton = new JButton("重置游戏");
         resetButton.setEnabled(false);
         newGameButton = new JButton("新游戏");
@@ -147,27 +201,51 @@ class WeaverView {
         controlPanel.add(newGameButton);
         frame.add(controlPanel, BorderLayout.EAST);
 
+        JPanel settingsPanel = new JPanel(new GridLayout(3, 1));
+        showErrorCheckbox = new JCheckBox("显示错误提示", WeaverSettings.showError);
+        showPathCheckbox = new JCheckBox("显示路径信息", WeaverSettings.showPath);
+        randomWordsCheckbox = new JCheckBox("随机词");
+
+        settingsPanel.add(showErrorCheckbox);
+        settingsPanel.add(showPathCheckbox);
+        settingsPanel.add(randomWordsCheckbox);
+
+        JPanel rightPanel = new JPanel(new BorderLayout());
+        rightPanel.add(controlPanel, BorderLayout.NORTH);
+        rightPanel.add(settingsPanel, BorderLayout.SOUTH);
+
+        frame.add(rightPanel, BorderLayout.EAST);
+
+
+        wordPairLabel = new JLabel("", SwingConstants.CENTER);
+        wordPairLabel.setFont(new Font("Arial", Font.BOLD, 16)); // 可自定义字体样式
+        topPanel.add(wordPairLabel); // 添加到顶部面板
+
+
+
         frame.setPreferredSize(new Dimension(600, 700));
         frame.pack();
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-    }
 
+        focusPanel = new JPanel();
+        focusPanel.setFocusable(true);
+        frame.add(focusPanel, BorderLayout.WEST);
+
+    }
 
     private void initializeKeyboard() {
         String[] keys = {
-            "Q","W","E","R","T","Y","U","I","O","P",
-            "A","S","D","F","G","H","J","K","L",
-            "Z","X","C","V","B","N","M","⌫"  // 最后添加删除符号
+                "Q","W","E","R","T","Y","U","I","O","P",
+                "A","S","D","F","G","H","J","K","L",
+                "ENTER","Z","X","C","V","B","N","M","⌫"
         };
-
         keyboardPanel = new JPanel(new GridLayout(4, 9, 5, 5));
         for (String key : keys) {
             JButton btn = new JButton(key);
             btn.setBackground(Color.DARK_GRAY);
             btn.setForeground(Color.WHITE);
-            btn.setFocusPainted(false);
             if (key.equals("⌫")) {
-                backspaceButton = btn;  // 保存删除按钮引用
+                backspaceButton = btn;
             } else {
                 letterButtons[key.charAt(0) - 'A'] = btn;
             }
@@ -176,35 +254,34 @@ class WeaverView {
     }
 
     public void addGuessRow(String guess, List<WeaverModel.LetterStatus> statuses) {
-        JPanel rowPanel = new JPanel(new GridLayout(1, 4, 2, 2));
+        JPanel rowPanel = new JPanel(new GridLayout(1, 4));
         for (int i = 0; i < guess.length(); i++) {
             JLabel label = new JLabel(String.valueOf(guess.charAt(i)), SwingConstants.CENTER);
             label.setOpaque(true);
-            label.setBackground(getColorForStatus(statuses.get(i)));
+            switch (statuses.get(i)) {
+                case CORRECT:
+                    label.setBackground(Color.GREEN);
+                    break;
+                case PRESENT:
+                    label.setBackground(Color.YELLOW);
+                    break;
+                case ABSENT:
+                    label.setBackground(Color.GRAY);
+                    break;
+            }
             label.setBorder(BorderFactory.createLineBorder(Color.BLACK));
-            label.setPreferredSize(new Dimension(50, 50));
             rowPanel.add(label);
         }
         gameGridPanel.add(rowPanel);
         gameGridPanel.revalidate();
     }
 
-    private Color getColorForStatus(WeaverModel.LetterStatus status) {
-        switch (status) {
-            case CORRECT: return Color.GREEN;
-            case PRESENT: return Color.YELLOW;
-            case ABSENT: return Color.GRAY;
-            default: return Color.LIGHT_GRAY;
-        }
-    }
-
     public void showWinMessage() {
-        JOptionPane.showMessageDialog(frame, "恭喜你赢了！步数: " + (model.getSteps()));
+        JOptionPane.showMessageDialog(frame, "恭喜你赢了！步数: " + model.getSteps());
     }
 
     public void updateStatus(int steps, boolean isWin) {
-        String text = isWin ? "胜利！步数: " + steps : "步数: " + steps;
-        statusLabel.setText(text);
+        statusLabel.setText(isWin ? "胜利！步数: " + steps : "步数: " + steps);
     }
 
     public void resetGameView() {
@@ -215,18 +292,19 @@ class WeaverView {
         frame.repaint();
     }
 
+    public void updateWordPair(String start, String target) {
+        wordPairLabel.setText(start + "   →   " + target);
+    }
+
+
     public JButton[] getLetterButtons() { return letterButtons; }
     public JButton getResetButton() { return resetButton; }
     public JButton getNewGameButton() { return newGameButton; }
+    public JButton getBackspaceButton() { return backspaceButton; }
     public JFrame getFrame() { return frame; }
     public void show() { frame.setVisible(true); frame.requestFocus(); }
-    // 添加获取删除按钮的方法
-    public JButton getBackspaceButton() {
-        return backspaceButton;
-    }
 }
 
-// Controller
 class WeaverController {
     private WeaverModel model;
     private WeaverView view;
@@ -237,22 +315,56 @@ class WeaverController {
         this.view = view;
         setupListeners();
         updateInputDisplay();
+        view.updateWordPair(model.getStartWord(), model.getTargetWord());
+
     }
 
+    private void showHintPath() {
+        List<String> path = model.findAnyPath(model.getStartWord(), model.getTargetWord());
+        if (path != null) {
+            StringBuilder message = new StringBuilder("提示路径：\n");
+            for (String step : path) {
+                message.append(step).append(" → ");
+            }
+            message.setLength(message.length() - 3); // 移除最后的箭头
+            JOptionPane.showMessageDialog(view.getFrame(), message.toString());
+        } else {
+            JOptionPane.showMessageDialog(view.getFrame(), "未能找到有效路径！");
+        }
+    }
+
+    private void handleEnter() {
+        if (currentInput.length() == 4) {
+            boolean valid = model.tryWord(currentInput);
+            if (valid) {
+                if (model.getSteps() == 1) view.getResetButton().setEnabled(true);
+                checkGameState();
+            } else {
+                if (WeaverSettings.showError) {
+                    JOptionPane.showMessageDialog(view.getFrame(), "无效的单词或无法转换！");
+                }
+            }
+            currentInput = "";
+            updateInputDisplay();
+        }
+    }
+
+
     private void setupListeners() {
-        // 虚拟键盘
         for (JButton btn : view.getLetterButtons()) {
             btn.addActionListener(e -> handleLetterInput(btn.getText()));
         }
-        // 添加删除按钮监听
         view.getBackspaceButton().addActionListener(e -> handleBackspace());
 
-
-        // 修改物理键盘监听
         view.getFrame().addKeyListener(new KeyAdapter() {
             public void keyPressed(KeyEvent e) {
-                if (e.getKeyCode() == KeyEvent.VK_BACK_SPACE) {
-                    handleBackspace();
+                switch (e.getKeyCode()) {
+                    case KeyEvent.VK_BACK_SPACE:
+                        handleBackspace();
+                        break;
+                    case KeyEvent.VK_ENTER:
+                        handleEnter();
+                        break;
                 }
             }
 
@@ -264,9 +376,24 @@ class WeaverController {
             }
         });
 
-        // Control buttons
+
+
+        view.showPathCheckbox.addItemListener(e -> {
+            WeaverSettings.showPath = view.showPathCheckbox.isSelected();
+            if (WeaverSettings.showPath) {
+                showHintPath();  // 当勾选时，立刻显示路径
+            }
+        });
+
+
+
+
         view.getResetButton().addActionListener(e -> handleReset());
         view.getNewGameButton().addActionListener(e -> handleNewGame());
+        view.showErrorCheckbox.addItemListener(e -> WeaverSettings.showError = view.showErrorCheckbox.isSelected());
+        view.showPathCheckbox.addItemListener(e -> WeaverSettings.showPath = view.showPathCheckbox.isSelected());
+        view.randomWordsCheckbox.addItemListener(e -> WeaverSettings.randomWords = view.randomWordsCheckbox.isSelected());
+
     }
 
     private void handleLetterInput(String letter) {
@@ -274,17 +401,8 @@ class WeaverController {
             currentInput += letter.toUpperCase();
             updateInputDisplay();
         }
-
         if (currentInput.length() == 4) {
-            boolean valid = model.tryWord(currentInput);
-            if (valid) {
-                if (model.getSteps() == 1) view.getResetButton().setEnabled(true);
-                checkGameState();
-            } else {
-                JOptionPane.showMessageDialog(view.getFrame(), "无效的单词或无法转换！");
-            }
-            currentInput = "";
-            updateInputDisplay();
+
         }
     }
 
@@ -296,13 +414,11 @@ class WeaverController {
     }
 
     private void updateInputDisplay() {
-        // 添加删除效果的显示更新
         String displayText = currentInput;
         while (displayText.length() < 4) {
-            displayText += "_";  // 用下划线表示待输入位置
+            displayText += "_";
         }
-        view.inputDisplayLabel.setText(
-            "<html><font color='gray'>" + displayText + "</font></html>");
+        view.inputDisplayLabel.setText("<html><font color='gray'>" + displayText + "</font></html>");
     }
 
     private void checkGameState() {
@@ -321,34 +437,39 @@ class WeaverController {
 
     private void handleNewGame() {
         Set<String> words = model.getWordSet();
-        String[] wordsArray = words.toArray(new String[0]);
-        if (wordsArray.length < 2) {
+        if (words.size() < 2) {
             JOptionPane.showMessageDialog(view.getFrame(), "单词列表不足！");
             return;
         }
-        Random rand = new Random();
-        String newStart = wordsArray[rand.nextInt(wordsArray.length)];
-        String newTarget;
-        do {
-            newTarget = wordsArray[rand.nextInt(wordsArray.length)];
-        } while (newStart.equals(newTarget));
-
-        model = new WeaverModel(newStart, newTarget, words);
+        WeaverModelFactory factory = new RandomWeaverModelFactory();
+        model = WeaverSettings.randomWords
+                ? factory.createModel(words)
+                : new WeaverModel("SOUL", "MATE", words, new DefaultLetterStatusStrategy());
+        view.model = model;
         view.resetGameView();
         view.getResetButton().setEnabled(false);
         updateInputDisplay();
+        view.updateWordPair(model.getStartWord(), model.getTargetWord());
+
     }
+
 }
 
 public class WeaverGUI {
     public static void main(String[] args) {
-        Set<String> words = loadWordList("words.txt");
+        Set<String> words = loadWordList("dictionary.txt");
         SwingUtilities.invokeLater(() -> {
-            WeaverModel model = new WeaverModel("EAST", "WEST", words);
+            WeaverModel model = WeaverSettings.randomWords
+                    ? new RandomWeaverModelFactory().createModel(words)
+                    : new WeaverModel("WEST", "EAST", words, new DefaultLetterStatusStrategy());
             WeaverView view = new WeaverView();
             view.model = model;
             new WeaverController(model, view);
             view.show();
+
+            if (WeaverSettings.showPath) {
+                System.out.println("[DEBUG] 从 " + model.getStartWord() + " 到 " + model.getTargetWord());
+            }
         });
     }
 

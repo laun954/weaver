@@ -1,37 +1,169 @@
-import java.io.BufferedReader;
-import java.io.FileReader;
-import java.io.IOException;
-import java.util.HashSet;
-import java.util.Scanner;
-import java.util.Set;
+import java.io.*;
+import java.util.*;
 
-public class Weaver {
+class GameConfig {
+    public boolean showError = true;
+    public boolean showPath = true;
+    public boolean randomWords = false;
+}
 
+interface FeedbackStrategy {
+    String generateFeedback(String input, String target);
+}
+
+class ColorFeedbackStrategy implements FeedbackStrategy {
     public static final String GREEN = "\u001B[32m";
-    public static final String GRAY = "\u001B[90m";
+    public static final String GRAY  = "\u001B[90m";
     public static final String RESET = "\u001B[0m";
 
-    public static void main(String[] args) {
-        // if (args.length != 2) {
-        //     System.err.println("用法: java Weaver <起始词> <目标词>");
-        //     System.exit(1);
-        // }
+    @Override
+    public String generateFeedback(String input, String target) {
+        StringBuilder feedback = new StringBuilder();
+        for (int i = 0; i < input.length(); i++) {
+            char c = input.charAt(i);
+            if (c == target.charAt(i)) {
+                feedback.append(GREEN).append(c).append(RESET);
+            } else if (target.indexOf(c) == -1) {
+                feedback.append(GRAY).append(c).append(RESET);
+            } else {
+                feedback.append(c);
+            }
+        }
+        return feedback.toString();
+    }
+}
 
-        Set<String> wordSet = loadWordSet("words.txt");
-        String startWord = "EAST";
-        String targetWord = "WEST";
+abstract class WordGame {
+    protected String startWord;
+    protected String targetWord;
+    protected Set<String> wordSet;
+    protected int steps;
+    protected GameConfig config;
 
-        validateWords(startWord, targetWord, wordSet);
+    public WordGame(String start, String target, Set<String> wordSet, GameConfig config) {
+        this.startWord = start.toUpperCase();
+        this.targetWord = target.toUpperCase();
+        this.wordSet = wordSet;
+        this.steps = 0;
+        this.config = config;
+    }
+
+    public final void play() {
+        if (!validateWords()) {
+            System.err.println("非法的起始词或目标词！");
+            return;
+        }
 
         if (startWord.equals(targetWord)) {
             System.out.println("起始词和目标词相同，游戏胜利！步数：0");
             return;
         }
 
-        playGame(startWord, targetWord, wordSet);
+        if (config.showPath) {
+            List<String> path = findAnyPath(startWord, targetWord);
+            if (path != null) {
+                System.out.println("（调试）起始词到目标词的路径： " + String.join(" -> ", path));
+            } else {
+                System.out.println("（调试）找不到从起始词到目标词的路径。");
+            }
+        }
+
+        gameLoop();
     }
 
-    private static Set<String> loadWordSet(String filename) {
+    protected abstract boolean validateWords();
+    protected abstract void gameLoop();
+
+    protected boolean isOneLetterDifference(String a, String b) {
+        if (a.length() != b.length()) return false;
+        int diff = 0;
+        for (int i = 0; i < a.length(); i++) {
+            if (a.charAt(i) != b.charAt(i)) diff++;
+            if (diff > 1) return false;
+        }
+        return diff == 1;
+    }
+
+    // 非最短路径搜索，只找一条合法路径即可
+    protected List<String> findAnyPath(String start, String target) {
+        Queue<List<String>> queue = new LinkedList<>();
+        Set<String> visited = new HashSet<>();
+        queue.offer(Arrays.asList(start));
+        visited.add(start);
+
+        while (!queue.isEmpty()) {
+            List<String> path = queue.poll();
+            String last = path.get(path.size() - 1);
+            if (last.equals(target)) return path;
+
+            for (String word : wordSet) {
+                if (!visited.contains(word) && isOneLetterDifference(last, word)) {
+                    List<String> newPath = new ArrayList<>(path);
+                    newPath.add(word);
+                    queue.offer(newPath);
+                    visited.add(word);
+                }
+            }
+        }
+        return null;
+    }
+}
+
+class WeaverGame extends WordGame {
+    private FeedbackStrategy feedbackStrategy;
+
+    public WeaverGame(String start, String target, Set<String> wordSet, FeedbackStrategy strategy, GameConfig config) {
+        super(start, target, wordSet, config);
+        this.feedbackStrategy = strategy;
+    }
+
+    @Override
+    protected boolean validateWords() {
+        return startWord.length() == 4 && targetWord.length() == 4 &&
+                wordSet.contains(startWord) && wordSet.contains(targetWord);
+    }
+
+    @Override
+    protected void gameLoop() {
+        Scanner scanner = new Scanner(System.in);
+        String currentWord = startWord;
+
+        while (true) {
+            System.out.println("\n当前词: " + currentWord);
+            System.out.println("目标词: " + targetWord);
+            System.out.print("请输入下一步的单词 (四字母): ");
+            String input = scanner.nextLine().trim().toUpperCase();
+
+            if (input.equals(targetWord)) {
+                if (isOneLetterDifference(currentWord, input)) {
+                    steps++;
+                    System.out.println("反馈: " + feedbackStrategy.generateFeedback(input, targetWord));
+                    System.out.println("恭喜！你成功了，步数: " + steps);
+                    break;
+                } else if (config.showError) {
+                    System.out.println("错误：必须与当前词仅差一个字母。");
+                }
+                continue;
+            }
+
+            if (input.length() != 4 || !wordSet.contains(input) || !isOneLetterDifference(currentWord, input)) {
+                if (config.showError) {
+                    System.out.println("错误：无效输入或不是仅差一个字母的单词。");
+                }
+                continue;
+            }
+
+            steps++;
+            System.out.println("反馈: " + feedbackStrategy.generateFeedback(input, targetWord));
+            currentWord = input;
+        }
+
+        scanner.close();
+    }
+}
+
+class WordListLoader {
+    public static Set<String> loadWordSet(String filename) {
         Set<String> wordSet = new HashSet<>();
         try (BufferedReader reader = new BufferedReader(new FileReader(filename))) {
             String line;
@@ -47,91 +179,64 @@ public class Weaver {
         }
         return wordSet;
     }
+}
 
-    private static void validateWords(String start, String target, Set<String> wordSet) {
-        if (start.length() != 4 || target.length() != 4) {
-            System.err.println("起始词和目标词必须为四字母。");
-            System.exit(1);
+public class Weaver {
+    public static void main(String[] args) {
+        GameConfig config = new GameConfig();
+
+        // ✅ 在这里配置标志
+        config.showError = true;
+        config.showPath = true;
+        config.randomWords = false;
+
+        Set<String> wordSet = WordListLoader.loadWordSet("dictionary.txt");
+
+        String startWord = "EAST";
+        String targetWord = "WEST";
+
+        if (config.randomWords) {
+            List<String> list = new ArrayList<>(wordSet);
+            Random rand = new Random();
+            do {
+                startWord = list.get(rand.nextInt(list.size()));
+                targetWord = list.get(rand.nextInt(list.size()));
+            } while (startWord.equals(targetWord) || !isPathExists(startWord, targetWord, wordSet));
         }
-        if (!wordSet.contains(start)) {
-            System.err.println("起始词无效。");
-            System.exit(1);
-        }
-        if (!wordSet.contains(target)) {
-            System.err.println("目标词无效。");
-            System.exit(1);
-        }
+
+        FeedbackStrategy strategy = new ColorFeedbackStrategy();
+        WordGame game = new WeaverGame(startWord, targetWord, wordSet, strategy, config);
+        game.play();
     }
 
-    private static void playGame(String start, String target, Set<String> wordSet) {
-        Scanner scanner = new Scanner(System.in);
-        String currentWord = start;
-        int steps = 0;
+    // 检查是否存在路径（避免陷入死局）
+    private static boolean isPathExists(String start, String target, Set<String> wordSet) {
+        Queue<String> queue = new LinkedList<>();
+        Set<String> visited = new HashSet<>();
+        queue.add(start);
+        visited.add(start);
 
-        while (true) {
-            System.out.println("\n当前词: " + currentWord);
-            System.out.println("目标词: " + target);
-            System.out.print("请输入下一步的单词 (四字母): ");
-            String input = scanner.nextLine().trim().toUpperCase();
+        while (!queue.isEmpty()) {
+            String current = queue.poll();
+            if (current.equals(target)) return true;
 
-            if (input.equals(target)) {
-                if (isOneLetterDifference(currentWord, input)) {
-                    steps++;
-                    System.out.println(generateFeedback(input, target));
-                    System.out.println("恭喜！你成功了，步数: " + steps);
-                    break;
-                } else {
-                    System.out.println("错误：必须与当前词仅差一个字母。");
-                    continue;
+            for (String word : wordSet) {
+                if (!visited.contains(word) && isOneLetterDiff(word, current)) {
+                    queue.add(word);
+                    visited.add(word);
                 }
             }
-
-            if (input.length() != 4) {
-                System.out.println("错误：单词必须为四字母。");
-                continue;
-            }
-
-            if (!wordSet.contains(input)) {
-                System.out.println("错误：无效的单词。");
-                continue;
-            }
-
-            if (!isOneLetterDifference(currentWord, input)) {
-                System.out.println("错误：必须与当前词仅差一个字母。");
-                continue;
-            }
-
-            steps++;
-            System.out.println("反馈: " + generateFeedback(input, target));
-            currentWord = input;
         }
-        scanner.close();
+        return false;
     }
 
-    private static boolean isOneLetterDifference(String word1, String word2) {
-        if (word1.length() != word2.length()) return false;
+    private static boolean isOneLetterDiff(String a, String b) {
+        if (a.length() != b.length()) return false;
         int diff = 0;
-        for (int i = 0; i < word1.length(); i++) {
-            if (word1.charAt(i) != word2.charAt(i)) {
-                diff++;
-                if (diff > 1) return false;
-            }
+        for (int i = 0; i < a.length(); i++) {
+            if (a.charAt(i) != b.charAt(i)) diff++;
+            if (diff > 1) return false;
         }
         return diff == 1;
-    }
-
-    private static String generateFeedback(String input, String target) {
-        StringBuilder feedback = new StringBuilder();
-        for (int i = 0; i < input.length(); i++) {
-            char c = input.charAt(i);
-            if (c == target.charAt(i)) {
-                feedback.append(GREEN).append(c).append(RESET);
-            } else if (target.indexOf(c) == -1) {
-                feedback.append(GRAY).append(c).append(RESET);
-            } else {
-                feedback.append(c);
-            }
-        }
-        return feedback.toString();
     }
 }
