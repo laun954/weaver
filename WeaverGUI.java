@@ -176,53 +176,51 @@ class WeaverView {
 
     public void setController(WeaverController controller) {
         this.controller = controller;
-        setupKeyboardListener();
+        setupKeyboardListener(controller);
     }
 
-    private void setupKeyboardListener() {
-        KeyListener keyListener = new KeyAdapter() {
+    public void setupKeyboardListener(WeaverController controller) {
+        // 创建一个全局键盘监听器
+        KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(new KeyEventDispatcher() {
             @Override
-            public void keyPressed(KeyEvent e) {
-                int keyCode = e.getKeyCode();
-                
-                // 处理特殊键
-                if (keyCode == KeyEvent.VK_BACK_SPACE) {
-                    backspaceButton.doClick();
-                    return;
-                }
-                
-                // 处理Enter键
-                if (keyCode == KeyEvent.VK_ENTER) {
-                    controller.handleEnterKey();
-                    return;
-                }
-                
-                // 处理字母e
-                if (keyCode == KeyEvent.VK_E) {
-                    letterButtons['E' - 'A'].doClick();
-                    return;
-                }
-                
-                // 处理其他字母键
-                if (keyCode >= KeyEvent.VK_A && keyCode <= KeyEvent.VK_Z) {
-                    int index = keyCode - KeyEvent.VK_A;
-                    if (letterButtons[index] != null) {
-                        letterButtons[index].doClick();
+            public boolean dispatchKeyEvent(KeyEvent e) {
+                if (e.getID() == KeyEvent.KEY_PRESSED) {
+                    int keyCode = e.getKeyCode();
+
+                    // 处理特殊键
+                    if (keyCode == KeyEvent.VK_BACK_SPACE) {
+                        backspaceButton.doClick();
+                        return true;
+                    }
+
+                    // 处理Enter键
+                    if (keyCode == KeyEvent.VK_ENTER) {
+                        controller.handleEnterKey();
+                        return true;
+                    }
+
+                    // 处理字母键
+                    if (keyCode >= KeyEvent.VK_A && keyCode <= KeyEvent.VK_Z) {
+                        int index = keyCode - KeyEvent.VK_A;
+                        if (letterButtons[index] != null) {
+                            letterButtons[index].doClick();
+                            return true;
+                        }
                     }
                 }
+                return false;
             }
-        };
-        
-        frame.addKeyListener(keyListener);
-        keyboardPanel.addKeyListener(keyListener);
-        inputDisplayLabel.addKeyListener(keyListener);
-        wordPairLabel.addKeyListener(keyListener);
-        
+        });
+
         // 确保所有组件都能接收键盘事件
         frame.setFocusable(true);
         keyboardPanel.setFocusable(true);
         inputDisplayLabel.setFocusable(true);
         wordPairLabel.setFocusable(true);
+        gameGridPanel.setFocusable(true);
+        
+        // 设置焦点
+        frame.requestFocusInWindow();
     }
 
     private void initializeUI() {
@@ -339,6 +337,8 @@ class WeaverView {
         statusLabel.setText("开始新游戏!");
         frame.revalidate();
         frame.repaint();
+        // 确保重置后重新获得焦点
+        frame.requestFocusInWindow();
     }
 
     public void updateWordPair(String start, String target) {
@@ -357,6 +357,9 @@ class WeaverController {
     private WeaverModel model;
     private WeaverView view;
     private String currentInput = "";
+    private String lastInvalidInput = ""; 
+    private boolean isErrorDialogShowing = false;
+
 
     public WeaverController(WeaverModel model, WeaverView view) {
         this.model = model;
@@ -444,6 +447,10 @@ class WeaverController {
         model.reset();
         view.resetGameView();
         view.getResetButton().setEnabled(false);
+        // 重新设置键盘监听器和焦点
+        view.setupKeyboardListener(this);
+        // 确保重置后重新获得焦点
+        view.getFrame().requestFocusInWindow();
     }
 
     private void handleNewGame() {
@@ -461,6 +468,10 @@ class WeaverController {
         view.getResetButton().setEnabled(false);
         updateInputDisplay();
         view.updateWordPair(model.getStartWord(), model.getTargetWord());
+        
+        view.setupKeyboardListener(this);
+        
+        view.getFrame().requestFocusInWindow();
     }
 
     public void handleEnterKey() {
@@ -475,15 +486,22 @@ class WeaverController {
             if (valid) {
                 if (model.getSteps() == 1) view.getResetButton().setEnabled(true);
                 checkGameState();
+                lastInvalidInput = ""; // 清除无效记录
             } else {
-                if (WeaverSettings.showError) {
-                    JOptionPane.showMessageDialog(view.getFrame(), "无效的单词或无法转换！");
+                if (WeaverSettings.showError && !currentInput.equals(lastInvalidInput) && !isErrorDialogShowing) {
+                    isErrorDialogShowing = true; // 锁定弹窗状态
+                    lastInvalidInput = currentInput;
+                    SwingUtilities.invokeLater(() -> {
+                        JOptionPane.showMessageDialog(view.getFrame(), "无效的单词或无法转换！");
+                        isErrorDialogShowing = false; // 关闭弹窗后解锁
+                    });
                 }
             }
             currentInput = "";
             updateInputDisplay();
         }
     }
+    
 }
 
 public class WeaverGUI {
@@ -521,56 +539,4 @@ public class WeaverGUI {
     }
 }
 
-abstract class WeaverGameTemplate {
-    public final void playGame() {
-        init();
-        while (!isWin()) {
-            String input = getInput();
-            processInput(input);
-            showFeedback();
-        }
-        showWin();
-    }
-    protected abstract void init();
-    protected abstract String getInput();
-    protected abstract void processInput(String input);
-    protected abstract void showFeedback();
-    protected abstract boolean isWin();
-    protected abstract void showWin();
-}
 
-class WeaverGUIGame extends WeaverGameTemplate {
-    private WeaverModel model;
-    private WeaverView view;
-    private String latestInput = "";
-
-    @Override
-    protected void init() {
-        // Implementation
-    }
-
-    @Override
-    protected String getInput() {
-        return latestInput;
-    }
-
-    @Override
-    protected void processInput(String input) {
-        model.tryWord(input);
-    }
-
-    @Override
-    protected void showFeedback() {
-        // Implementation
-    }
-
-    @Override
-    protected boolean isWin() {
-        return model.isWin();
-    }
-
-    @Override
-    protected void showWin() {
-        // Implementation
-    }
-} 
